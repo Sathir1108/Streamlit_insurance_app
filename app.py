@@ -2,7 +2,6 @@ import tempfile
 import streamlit as st
 import os
 import json
-import base64
 import pandas as pd
 import google.generativeai as genai
 from io import BytesIO
@@ -10,6 +9,7 @@ import openpyxl
 from dotenv import load_dotenv
 import re
 from datetime import datetime
+from streamlit_pdf_viewer import pdf_viewer
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -246,6 +246,8 @@ def main():
         st.session_state.show_export_button = True  
     if 'current_file_name' not in st.session_state:
         st.session_state.current_file_name = None  
+    if 'pdf_bytes' not in st.session_state:
+        st.session_state.pdf_bytes = None
 
     # Column widths
     col1, col2 = st.columns([2, 2], gap="large")
@@ -265,25 +267,24 @@ def main():
                 st.session_state.excel_file = None
                 st.session_state.show_export_button = True
                 st.session_state.current_file_name = new_file_name
+                st.session_state.pdf_bytes = None
                 st.rerun()
 
             try:
                 pdf_bytes = uploaded_file.getvalue()
-                base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-                pdf_display = f'''
-                    <iframe 
-                        src="data:application/pdf;base64,{base64_pdf}" 
-                        width="100%" 
-                        height="1100" 
-                        type="application/pdf"
-                        style="border: 1px solid #ddd; border-radius: 4px;"
-                    >
-                    </iframe>
-                '''
-                st.markdown(pdf_display, unsafe_allow_html=True)
+                st.session_state.pdf_bytes = pdf_bytes
+
+                # Validate PDF size
+                if len(pdf_bytes) == 0:
+                    st.error("Uploaded PDF is empty.")
+                    return
+
+                # Display PDF using streamlit-pdf-viewer
+                pdf_viewer(pdf_bytes, width=700, height=1100)
+
                 uploaded_file.seek(0)
             except Exception as e:
-                st.error(f"Preview error: {str(e)}")
+                st.error(f"PDF rendering error: {str(e)}")
 
     with col2:
         st.markdown("---")
@@ -291,7 +292,7 @@ def main():
             if st.button("🚀 Process Document"):
                 with st.spinner("Analyzing document..."):
                     try:
-                        pdf_bytes = uploaded_file.getvalue()
+                        pdf_bytes = st.session_state.pdf_bytes
                         result = process_document(pdf_bytes)
                         if result:
                             st.session_state.extracted_data = result
