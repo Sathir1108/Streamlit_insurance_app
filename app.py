@@ -11,6 +11,8 @@ import re
 from datetime import datetime
 from streamlit_pdf_viewer import pdf_viewer
 
+
+
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
@@ -171,7 +173,18 @@ def flatten_json(extracted_data):
 
 def process_document(pdf_bytes):
     """Process PDF document using Gemini AI"""
+    
     try:
+        import hashlib
+        import time
+
+        pdf_hash = hashlib.md5(pdf_bytes).hexdigest()
+        cache_key = f"gemini_cache_{pdf_hash}"
+
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
             temp_file.write(pdf_bytes)
             temp_file_path = temp_file.name
@@ -180,7 +193,8 @@ def process_document(pdf_bytes):
             path=temp_file_path,
             mime_type="application/pdf"
         )
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
         prompt = (
             "Extract all insurance form fields from the document. Return structured JSON data with: "
             "1. 'Policy & Vehicle Details' including Policy_Number, Full_Name, NIC_or_Reg_No, Postal_Address, Mobile, Landline, Email, preferred_language, Financial_Interest, Accident_free_or_other_damages, Claims_in_Last_3_Years, Registered_Owner, Business_Occupation; "
@@ -192,7 +206,17 @@ def process_document(pdf_bytes):
             "Format all amount fields (Market_Value, Extra_Fittings_Value, Total_Value_Insured, and 'Amount' in Insurance Coverage) with commas as thousand separators (e.g., '4,500,000'). "
             "Ensure the output is valid JSON. If a field is not present or cannot be determined, use an empty string ('') or an empty list ([]) as appropriate."
         )
-        response = model.generate_content([prompt, uploaded_file])
+        
+        for attempt in range(2):
+            try:
+                response = model.generate_content([prompt, uploaded_file])
+                break
+            except Exception as e:
+                if "429" in str(e):
+                    time.sleep(60)
+                else:
+                    raise e
+
         os.unlink(temp_file_path)
 
         if response and hasattr(response, 'text') and response.text:
@@ -209,8 +233,10 @@ def process_document(pdf_bytes):
 
             json_str = fix_trailing_commas(json_str)
             try:
-                extracted_data = json.loads(json_str)
-                return flatten_json(extracted_data)
+                final_data = flatten_json(extracted_data)
+                st.session_state[cache_key] = final_data
+                return final_data
+
             except json.JSONDecodeError as e:
                 st.error(f"JSON parsing error: {str(e)} - Raw response: {response_text}")
                 return None
@@ -454,3 +480,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
